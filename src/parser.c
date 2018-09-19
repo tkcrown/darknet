@@ -1245,7 +1245,10 @@ void load_weights_upto(network *net, char *filename, int start, int cutoff)
     int i;
     for(i = start; i < net->n && i < cutoff; ++i){
         layer l = net->layers[i];
-        if (l.dontload) continue;
+        if (l.dontload){
+            printf("=> Dont load weights for layer %d\n", i);
+            continue;
+        }
         if(l.type == CONVOLUTIONAL || l.type == DECONVOLUTIONAL){
             load_convolutional_weights(l, fp);
         }
