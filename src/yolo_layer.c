@@ -50,6 +50,7 @@ layer make_yolo_layer(int batch, int w, int h, int n, int total, int *mask, int 
 #ifdef GPU
     l.forward_gpu = forward_yolo_layer_gpu;
     l.backward_gpu = backward_yolo_layer_gpu;
+
     l.output_gpu = cuda_make_array(l.output, batch*l.outputs);
     l.delta_gpu = cuda_make_array(l.delta, batch*l.outputs);
 #endif
@@ -108,10 +109,10 @@ float delta_yolo_box(box truth, float *x, float *biases, int n, int index, int i
 }
 
 
-void delta_yolo_class(float *output, float *delta, int index, int class, int classes, int stride, float *avg_cat)
+void delta_yolo_class(float *output, float *delta, int index, int class, int classes, int stride, float *avg_cat, int use_sigmoid)
 {
     int n;
-    if (delta[index]){
+    if (delta[index] && use_sigmoid){
         delta[index + stride*class] = 1 - output[index + stride*class];
         if(avg_cat) *avg_cat += output[index + stride*class];
         return;
@@ -185,7 +186,7 @@ void forward_yolo_layer(const layer l, network net)
                         int class = net.truth[best_t*(4 + 1) + b*l.truths + 4];
                         if (l.map) class = l.map[class];
                         int class_index = entry_index(l, b, n*l.w*l.h + j*l.w + i, 4 + 1);
-                        delta_yolo_class(l.output, l.delta, class_index, class, l.classes, l.w*l.h, 0);
+                        delta_yolo_class(l.output, l.delta, class_index, class, l.classes, l.w*l.h, 0, !l.softmax);
                         box truth = float_to_box(net.truth + best_t*(4 + 1) + b*l.truths, 1);
                         delta_yolo_box(truth, l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, net.w, net.h, l.delta, (2-truth.w*truth.h), l.w*l.h);
                     }
@@ -225,7 +226,7 @@ void forward_yolo_layer(const layer l, network net)
                 int class = net.truth[t*(4 + 1) + b*l.truths + 4];
                 if (l.map) class = l.map[class];
                 int class_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 4 + 1);
-                delta_yolo_class(l.output, l.delta, class_index, class, l.classes, l.w*l.h, &avg_cat);
+                delta_yolo_class(l.output, l.delta, class_index, class, l.classes, l.w*l.h, &avg_cat, !l.softmax);
 
                 ++count;
                 ++class_count;
@@ -236,7 +237,7 @@ void forward_yolo_layer(const layer l, network net)
         }
     }
     *(l.cost) = pow(mag_array(l.delta, l.outputs * l.batch), 2);
-    printf("Region %d Avg IOU: %f, Class: %f, Obj: %f, No Obj: %f, .5R: %f, .75R: %f,  count: %d\n", net.index, avg_iou/count, avg_cat/class_count, avg_obj/count, avg_anyobj/(l.w*l.h*l.n*l.batch), recall/count, recall75/count, count);
+    printf("Region %d Avg IOU: %f, Class: %f, Obj: %f, No Obj: %f, .5R: %f, .75R: %f,  count: %d is_softmax: %d \n", net.index, avg_iou/count, avg_cat/class_count, avg_obj/count, avg_anyobj/(l.w*l.h*l.n*l.batch), recall/count, recall75/count, count, l.softmax);
 }
 
 void backward_yolo_layer(const layer l, network net)
@@ -343,8 +344,31 @@ int get_yolo_detections(layer l, int w, int h, int netw, int neth, float thresh,
 }
 
 #ifdef GPU
-
 void forward_yolo_layer_gpu(const layer l, network net)
+{
+    if (l.softmax)
+    {
+        forward_yolo_softmax_layer_gpu(l, net);
+    }
+    else
+    {
+        forward_yolo_sigmoid_layer_gpu(l, net);
+    }
+}
+
+void backward_yolo_layer_gpu(const layer l, network net)
+{
+    if (l.softmax)
+    {
+        backward_yolo_softmax_layer_gpu(l, net);
+    }
+    else
+    {
+        backward_yolo_sigmoid_layer_gpu(l, net);
+    }
+}
+
+void forward_yolo_sigmoid_layer_gpu(const layer l, network net)
 {
     copy_gpu(l.batch*l.inputs, net.input_gpu, 1, l.output_gpu, 1);
     int b, n;
@@ -366,9 +390,50 @@ void forward_yolo_layer_gpu(const layer l, network net)
     cuda_push_array(l.delta_gpu, l.delta, l.batch*l.outputs);
 }
 
-void backward_yolo_layer_gpu(const layer l, network net)
+void backward_yolo_sigmoid_layer_gpu(const layer l, network net)
 {
     axpy_gpu(l.batch*l.inputs, 1, l.delta_gpu, 1, net.delta_gpu, 1);
 }
+
+void forward_yolo_softmax_layer_gpu(const layer l, network net)
+{
+    copy_gpu(l.batch*l.inputs, net.input_gpu, 1, l.output_gpu, 1);
+    int b, n;
+    for (b = 0; b < l.batch; ++b){
+        for(n = 0; n < l.n; ++n){
+            int index = entry_index(l, b, n*l.w*l.h, 0);
+            activate_array_gpu(l.output_gpu + index, 2*l.w*l.h, LOGISTIC);
+            index = entry_index(l, b, n*l.w*l.h, 4);
+            activate_array_gpu(l.output_gpu + index,   l.w*l.h, LOGISTIC);
+        }
+    }
+    int index = entry_index(l, 0, 0, 4 + 1);
+    softmax_gpu(net.input_gpu + index, l.classes + 0, l.batch*l.n, l.inputs/l.n, l.w*l.h, 1, l.w*l.h, 1, l.output_gpu + index);
+    if(!net.train || l.onlyforward){
+        cuda_pull_array(l.output_gpu, l.output, l.batch*l.outputs);
+        return;
+    }
+
+    cuda_pull_array(l.output_gpu, net.input, l.batch*l.inputs);
+    forward_yolo_layer(l, net);
+    //cuda_push_array(l.output_gpu, l.output, l.batch*l.outputs);
+    if(!net.train) return;
+    cuda_push_array(l.delta_gpu, l.delta, l.batch*l.outputs);
+}
+
+void backward_yolo_softmax_layer_gpu(const layer l, network net)
+{
+    int b, n;
+    for (b = 0; b < l.batch; ++b){
+        for(n = 0; n < l.n; ++n){
+            int index = entry_index(l, b, n*l.w*l.h, 0);
+            gradient_array_gpu(l.output_gpu + index, 2*l.w*l.h, LOGISTIC, l.delta_gpu + index);
+            index = entry_index(l, b, n*l.w*l.h, 4);
+            gradient_array_gpu(l.output_gpu + index,   l.w*l.h, LOGISTIC, l.delta_gpu + index);
+        }
+    }
+    axpy_gpu(l.batch*l.inputs, 1, l.delta_gpu, 1, net.delta_gpu, 1);
+}
+
 #endif
 
