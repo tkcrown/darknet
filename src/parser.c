@@ -321,6 +321,9 @@ layer parse_yolo(list *options, size_params params)
     l.truth_thresh = option_find_float(options, "truth_thresh", 1);
     l.random = option_find_int_quiet(options, "random", 0);
     l.softmax = option_find_int(options, "softmax", 0);
+    l.object_scale = option_find_float(options, "object_scale", 1);
+    l.pos_class_scale = option_find_float(options, "pos_class_scale", 1);
+
     char *map_file = option_find_str(options, "map", 0);
     if (map_file) l.map = read_map(map_file);
 

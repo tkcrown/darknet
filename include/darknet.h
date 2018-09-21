@@ -187,6 +187,7 @@ struct layer{
     float noobject_scale;
     float mask_scale;
     float class_scale;
+    float pos_class_scale;
     int bias_match;
     int random;
     float ignore_thresh;
