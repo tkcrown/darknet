@@ -314,7 +314,7 @@ void avg_flipped_yolo(layer l)
     }
 }
 
-int get_yolo_sigmoid_detections(layer l, int w, int h, int netw, int neth, float thresh, int *map, int relative, detection *dets)
+int get_yolo_detections(layer l, int w, int h, int netw, int neth, float thresh, int *map, int relative, detection *dets)
 {
     int i,j,n;
     float *predictions = l.output;
@@ -341,37 +341,6 @@ int get_yolo_sigmoid_detections(layer l, int w, int h, int netw, int neth, float
     }
     correct_yolo_boxes(dets, count, w, h, netw, neth, relative);
     return count;
-}
-
-void get_yolo_softmax_detections(layer l, int w, int h, int netw, int neth, float thresh, int *map, int relative, detection *dets)
-{
-    int i,j,n;
-    float *predictions = l.output;
-    for (i = 0; i < l.w*l.h; ++i){
-        int row = i / l.w;
-        int col = i % l.w;
-        for(n = 0; n < l.n; ++n){
-            int index = n*l.w*l.h + i;
-            for(j = 0; j < l.classes; ++j){
-                dets[index].prob[j] = 0;
-            }
-
-            int obj_index  = entry_index(l, 0, n*l.w*l.h + i, 4);
-            int box_index  = entry_index(l, 0, n*l.w*l.h + i, 0);
-            float scale = predictions[obj_index];
-            dets[index].bbox = get_yolo_box(predictions, l.biases, l.mask[n], box_index, col, row, l.w, l.h, netw, neth, l.w*l.h);
-            dets[index].objectness = scale > thresh ? scale : 0;
-            if(dets[index].objectness){
-                for(j = 0; j < l.classes; ++j){
-                    int class_index = entry_index(l, 0, n*l.w*l.h + i, 4 + 1 + j);
-                    float prob = scale*predictions[class_index];
-                    dets[index].prob[j] = (prob > thresh) ? prob : 0;
-               }
-            }
-        }
-    }
-
-    correct_yolo_boxes(dets, l.w*l.h*l.n, w, h, netw, neth, relative);
 }
 
 #ifdef GPU

@@ -513,11 +513,11 @@ int num_detections(network *net, float thresh)
     int s = 0;
     for(i = 0; i < net->n; ++i){
         layer l = net->layers[i];
-        if(l.type == DETECTION || l.type == REGION || l.softmax){
-            s += l.w*l.h*l.n;
-        }
         if(l.type == YOLO){
             s += yolo_num_detections(l, thresh);
+        }
+        if(l.type == DETECTION || l.type == REGION){
+            s += l.w*l.h*l.n;
         }
     }
     return s;
@@ -545,13 +545,8 @@ void fill_network_boxes(network *net, int w, int h, float thresh, float hier, in
     for(j = 0; j < net->n; ++j){
         layer l = net->layers[j];
         if(l.type == YOLO){
-            if (l.softmax){
-		get_yolo_softmax_detections(l, w, h, net->w, net->h, thresh, map, relative, dets);
-                dets += l.w*l.h*l.n;
-            }else{
-                dets += get_yolo_sigmoid_detections(l, w, h, net->w, net->h, thresh, map, relative, dets);
-            }
-
+            int count = get_yolo_detections(l, w, h, net->w, net->h, thresh, map, relative, dets);
+            dets += count;
         }
         if(l.type == REGION){
             get_region_detections(l, w, h, net->w, net->h, thresh, map, hier, relative, dets);
