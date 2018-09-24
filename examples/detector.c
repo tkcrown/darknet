@@ -363,6 +363,7 @@ void validate_detector_flip(char *datacfg, char *cfgfile, char *weightfile, char
 
 void validate_detector(char *datacfg, char *cfgfile, char *weightfile, char *outfile, int device_id)
 {
+printf("device: %d\n", device_id);
     int j;
     list *options = read_data_cfg(datacfg);
     char *valid_images = option_find_str(options, "valid", "data/train.list");
@@ -373,7 +374,10 @@ void validate_detector(char *datacfg, char *cfgfile, char *weightfile, char *out
     int *map = 0;
     if (mapf) map = read_map(mapf);
 
-    network *net = load_network(cfgfile, weightfile, device_id);
+#ifdef GPU
+    cuda_set_device(device_id);
+#endif
+    network *net = load_network(cfgfile, weightfile, 0);
     set_batch_network(net, 1);
     fprintf(stderr, "Learning Rate: %g, Momentum: %g, Decay: %g\n", net->learning_rate, net->momentum, net->decay);
     srand(time(0));
@@ -815,6 +819,7 @@ void run_detector(int argc, char **argv)
         for(i = 0; i < ngpus; ++i){
             gpus[i] = atoi(gpu_list);
             gpu_list = strchr(gpu_list, ',')+1;
+            printf("gpu: %d\n", gpus[i]);
         }
     } else {
         gpu = gpu_index;
